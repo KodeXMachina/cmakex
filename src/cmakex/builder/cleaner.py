@@ -16,6 +16,8 @@ class CleanInfo:
     directories: List[Path]  # Directories to display (may be collapsed)
     files: List[Path]  # Individual files to display
     total_file_count: int  # Total number of files (including those in collapsed dirs)
+    installed_dirs: List[Path]  # Collapsed install directories (from install_manifest.txt)
+    installed_files: List[Path]  # Individual installed files that couldn't be collapsed
 
 
 class Cleaner:
@@ -31,27 +33,51 @@ class Cleaner:
         Returns CleanInfo with smart directory grouping:
         - If all files in a directory will be removed, show only the directory
         - If some files remain, show individual files
+        Also includes files from install_manifest.txt that will be uninstalled.
         """
         if not self.build_dir.exists():
-            return CleanInfo(directories=[], files=[], total_file_count=0)
+            return CleanInfo(directories=[], files=[], total_file_count=0, installed_dirs=[], installed_files=[])
 
         # Collect all artifacts that would be removed
         artifacts = self._scan_build_artifacts()
 
         # Apply smart grouping
-        return self._group_by_directory(artifacts)
+        info = self._group_by_directory(artifacts)
+        inst_dirs, inst_files = self._scan_installed_files()
+        info.installed_dirs = inst_dirs
+        info.installed_files = inst_files
+        return info
 
     def get_purge_targets(self) -> CleanInfo:
         """Get list for purge operation (entire build directory)."""
         if not self.build_dir.exists():
-            return CleanInfo(directories=[], files=[], total_file_count=0)
+            return CleanInfo(directories=[], files=[], total_file_count=0, installed_dirs=[], installed_files=[])
 
         # Count total files for display
         total_files = sum(1 for _ in self.build_dir.rglob("*") if _.is_file())
 
+        inst_dirs, inst_files = self._scan_installed_files()
         return CleanInfo(
-            directories=[self.build_dir], files=[], total_file_count=total_files
+            directories=[self.build_dir], files=[], total_file_count=total_files,
+            installed_dirs=inst_dirs, installed_files=inst_files,
         )
+
+    def _scan_installed_files(self) -> Tuple[List[Path], List[Path]]:
+        """Parse install_manifest.txt and return (collapsed_dirs, individual_files)
+        using the same smart-grouping logic as build artifacts."""
+        manifest = self.build_dir / "install_manifest.txt"
+        if not manifest.exists():
+            return [], []
+        raw: List[Path] = []
+        with manifest.open() as fh:
+            for line in fh:
+                p = Path(line.strip())
+                if p and p.is_file():
+                    raw.append(p)
+        if not raw:
+            return [], []
+        grouped = self._group_by_directory(raw)
+        return grouped.directories, grouped.files
 
     def _scan_build_artifacts(self) -> List[Path]:
         """Scan build directory for CMake artifacts to clean.
@@ -92,7 +118,7 @@ class Cleaner:
         Otherwise, show individual files.
         """
         if not artifacts:
-            return CleanInfo(directories=[], files=[], total_file_count=0)
+            return CleanInfo(directories=[], files=[], total_file_count=0, installed_dirs=[], installed_files=[])
 
         # Group files by their parent directory
         dir_files: Dict[Path, Set[Path]] = defaultdict(set)
@@ -135,6 +161,8 @@ class Cleaner:
             directories=sorted(optimized_dirs),
             files=sorted(final_files),
             total_file_count=len(artifacts),
+            installed_dirs=[],
+            installed_files=[],
         )
 
     def _collapse_parent_directories(

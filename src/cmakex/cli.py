@@ -8,7 +8,7 @@ from typing import Optional
 
 import click
 
-from .builder import Cleaner, build, clean, configure, install, purge
+from .builder import Cleaner, build, clean, configure, install, purge, uninstall
 from .parser import parse_cmake_file
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
@@ -422,7 +422,7 @@ def cmd_clean(build_dir: str, do_purge: bool, verbose: bool, yes: bool) -> None:
         sys.exit(1)
 
     # Display what will be removed
-    if clean_info.directories or clean_info.files:
+    if clean_info.directories or clean_info.files or clean_info.installed_dirs or clean_info.installed_files:
         click.echo(click.style("The following will be removed:", bold=True))
         click.echo()
 
@@ -444,6 +444,26 @@ def cmd_clean(build_dir: str, do_purge: bool, verbose: bool, yes: bool) -> None:
                 click.echo(
                     f"  ... and {len(clean_info.files) - display_limit} more files"
                 )
+            click.echo()
+
+        if clean_info.installed_dirs or clean_info.installed_files:
+            installed_total = clean_info.installed_dirs.__len__() + clean_info.installed_files.__len__()
+            click.echo(
+                click.style(
+                    f"Installed (from install_manifest.txt):",
+                    fg="yellow",
+                )
+            )
+            for d in clean_info.installed_dirs:
+                click.echo(f"  {d}/")
+            display_limit = 50
+            shown = 0
+            for f in clean_info.installed_files[:display_limit]:
+                click.echo(f"  {f}")
+                shown += 1
+            remaining = len(clean_info.installed_files) - shown
+            if remaining > 0:
+                click.echo(f"  ... and {remaining} more files")
             click.echo()
 
         # Show total count if different from displayed
@@ -471,6 +491,9 @@ def cmd_clean(build_dir: str, do_purge: bool, verbose: bool, yes: bool) -> None:
             rc = purge(bd, verbose=verbose)
         else:
             rc = clean(bd, verbose=verbose)
+            # Also remove files that were previously installed
+            if clean_info.installed_dirs or clean_info.installed_files:
+                uninstall(bd, verbose=verbose)
     except FileNotFoundError as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
