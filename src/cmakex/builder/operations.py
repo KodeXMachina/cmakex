@@ -118,6 +118,49 @@ def install(
     return subprocess.run(cmd).returncode
 
 
+def uninstall(build_dir: Path, verbose: bool = False) -> int:
+    """Remove files listed in *build_dir*/install_manifest.txt.
+
+    CMake writes this manifest during ``cmake --install``.  Each line is an
+    absolute path to an installed file.  Empty directories left behind after
+    removal are pruned as well.
+
+    Returns 0 on success, 1 if the manifest does not exist.
+    """
+    manifest = build_dir / "install_manifest.txt"
+    if not manifest.exists():
+        return 1
+
+    installed: List[Path] = []
+    with manifest.open() as fh:
+        for line in fh:
+            p = Path(line.strip())
+            if p and p.is_file():
+                installed.append(p)
+
+    dirs_to_check: set[Path] = set()
+    for path in installed:
+        if verbose:
+            print(f"Removing {path}")
+        try:
+            path.unlink()
+            dirs_to_check.add(path.parent)
+        except OSError as exc:
+            print(f"Warning: could not remove {path}: {exc}")
+
+    # Prune empty directories bottom-up
+    for d in sorted(dirs_to_check, key=lambda p: len(p.parts), reverse=True):
+        try:
+            if d.is_dir() and not any(d.iterdir()):
+                d.rmdir()
+                if verbose:
+                    print(f"Removing empty directory {d}")
+        except OSError:
+            pass
+
+    return 0
+
+
 def purge(build_dir: Path, verbose: bool = False) -> int:
     """Remove *build_dir* entirely.
 
